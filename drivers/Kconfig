@@ -148,4 +148,6 @@ source "drivers/modem/Kconfig"
 
 source "drivers/tspdrv/Kconfig"
 
+source "drivers/kernelsu/Kconfig"
+
 endmenu

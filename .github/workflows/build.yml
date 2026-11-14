@@ -1,0 +1,122 @@
+name: 编译 KernelSU 严格内核
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ARCH: arm
+  SUBARCH: arm
+  TOOLCHAIN_URL: https://developer.arm.com/-/cdn-downloads/permalink/legacy-linaro-gnu-toolchains/5.1-2015.08/gcc-linaro-5.1-2015.08-x86_64_arm-linux-gnueabi.tar.xz
+  TOOLCHAIN_DIR: /opt/toolchain/gcc-linaro-5.1-2015.08-x86_64_arm-linux-gnueabi
+  TOOLCHAIN_PREFIX: /opt/toolchain/gcc-linaro-5.1-2015.08-x86_64_arm-linux-gnueabi/bin/arm-linux-gnueabi-
+  KERNEL_RELEASE: 3.4.113-perf-kernelsu
+  KERNEL_LOCALVERSION: -perf-kernelsu
+  TZ: Asia/Shanghai
+  KBUILD_BUILD_TIMESTAMP: "Wed Sep 23 00:00:00 CST 2026"
+  KBUILD_BUILD_VERSION: "1"
+
+jobs:
+  build:
+    name: Build pisces (SELinux enforcing)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout kernel and pinned KernelSU
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Set build directories
+        run: |
+          echo "OUT_DIR=$RUNNER_TEMP/pisces-out" >> "$GITHUB_ENV"
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/pisces-artifacts" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$RUNNER_TEMP/pisces-ccache" >> "$GITHUB_ENV"
+          test -f drivers/kernelsu/Kconfig
+          git submodule status --recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git libssl-dev python3 xz-utils
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-pisces-linaro-gcc-5.1-2015.08-${{ hashFiles('arch/arm/configs/tegra11_pisces_user_defconfig', '.github/workflows/build.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.ref_name }}-pisces-linaro-gcc-5.1-2015.08-
+            ccache-${{ runner.os }}-pisces-linaro-gcc-5.1-2015.08-
+
+      - name: Configure ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache --set-config=max_size=5G
+          ccache --set-config=compiler_check=content
+          ccache --zero-stats
+
+      - name: Download and extract Linaro GCC 5.1.1
+        run: |
+          sudo install -d -o "$USER" -g "$(id -gn)" /opt/toolchain
+          TOOLCHAIN_ARCHIVE="$RUNNER_TEMP/gcc-linaro-5.1-2015.08.tar.xz"
+          curl -L --fail --connect-timeout 30 --max-time 300 "$TOOLCHAIN_URL" -o "$TOOLCHAIN_ARCHIVE"
+          tar -xJf "$TOOLCHAIN_ARCHIVE" -C /opt/toolchain
+          test -x "${TOOLCHAIN_PREFIX}gcc"
+          "${TOOLCHAIN_PREFIX}gcc" --version
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Configure enforcing KernelSU kernel
+        run: |
+          mkdir -p "$OUT_DIR"
+          MAKE_ARGS=(
+            O="$OUT_DIR"
+            ARCH="$ARCH"
+            SUBARCH="$SUBARCH"
+            CROSS_COMPILE="ccache $TOOLCHAIN_PREFIX"
+            HOSTCFLAGS="-O2 -fcommon"
+            LOCALVERSION=""
+          )
+          make "${MAKE_ARGS[@]}" tegra11_pisces_user_defconfig
+          scripts/config --file "$OUT_DIR/.config" --set-str LOCALVERSION "$KERNEL_LOCALVERSION" --disable LOCALVERSION_AUTO
+          make "${MAKE_ARGS[@]}" silentoldconfig
+          for option in KSU KSU_TAMPER_SYSCALL_TABLE KSU_LSM_SECURITY_HOOKS KSU_ENABLE_FULL_UID_CHECKS SECURITY_SELINUX KALLSYMS KALLSYMS_ALL SECCOMP; do
+            grep -qx "CONFIG_${option}=y" "$OUT_DIR/.config"
+          done
+          for option in SECURITY_SELINUX_DEVELOP SECURITY_SELINUX_DISABLE SECURITY_SELINUX_BOOTPARAM; do
+            grep -qx "# CONFIG_${option} is not set" "$OUT_DIR/.config"
+          done
+          test "$(make -s "${MAKE_ARGS[@]}" kernelrelease)" = "$KERNEL_RELEASE"
+
+      - name: Build zImage
+        run: |
+          make -j"$(nproc)" O="$OUT_DIR" ARCH="$ARCH" SUBARCH="$SUBARCH" \
+            CROSS_COMPILE="ccache $TOOLCHAIN_PREFIX" HOSTCFLAGS="-O2 -fcommon" LOCALVERSION="" zImage
+          test -s "$OUT_DIR/arch/arm/boot/zImage"
+
+      - name: Replace kernel in enforcing boot image
+        run: |
+          BOOT_IMAGE="$ARTIFACT_DIR/boot-pisces-${KERNEL_RELEASE}-${GITHUB_RUN_NUMBER}-selinux-enforcing.img"
+          python3 .github/scripts/repack_boot.py \
+            .github/boot.img "$OUT_DIR/arch/arm/boot/zImage" "$BOOT_IMAGE"
+          test -s "$BOOT_IMAGE"
+          echo "BOOT_IMAGE=$BOOT_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Show ccache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Upload enforcing boot image
+        uses: actions/upload-artifact@v7
+        with:
+          name: pisces-enforcing-${{ github.run_number }}
+          path: ${{ env.BOOT_IMAGE }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30

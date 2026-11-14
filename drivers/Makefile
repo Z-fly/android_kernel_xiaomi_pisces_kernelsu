@@ -141,3 +141,5 @@ obj-$(CONFIG_EXTCON)		+= extcon/
 obj-$(CONFIG_SC8800G_MODEM)	+= modem/
 
 obj-$(CONFIG_TSPDRV) += tspdrv/
+
+obj-$(CONFIG_KSU) += kernelsu/

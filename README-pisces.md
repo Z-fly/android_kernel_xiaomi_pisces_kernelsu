@@ -38,6 +38,26 @@ make ARCH=arm zImage -j16
 或由 Lineage 构建系统直接编译（`TARGET_KERNEL_SOURCE=kernel/xiaomi/pisces`，
 defconfig `tegra11_pisces_user_defconfig`，工具链 `arm-linux-androideabi-4.9`）。
 
+## KernelSU 与 GitHub Actions
+
+- `KernelSU` 为 `backslashxx/KernelSU` 子模块，固定提交
+  `41ddc6ee368f8dc7505e10980e78cee8ad1eb3f3`，与 aries 参考移植一致。
+- 首次检出后执行 `git submodule update --init --recursive`；
+  `drivers/kernelsu` 链接到 `../KernelSU/kernel`。更新子模块时应显式审查并提交新的 gitlink。
+- pisces defconfig 内置 KernelSU，使用 ARM syscall table 和旧版 LSM 钩子，
+  启用完整 UID 检查，不依赖 kprobes。
+- 当前只生成 SELinux enforcing 版本；关闭 `SECURITY_SELINUX_DEVELOP`，
+  保持 SELinux 启用并禁止启动参数及运行期关闭 SELinux。
+- 手动触发 `.github/workflows/build.yml`，使用 Linaro GCC 5.1.1 和
+  `tegra11_pisces_user_defconfig` 编译 `zImage`。
+- CI 调用 `.github/scripts/repack_boot.py`，将新 `zImage` 替换进
+  `.github/boot.img` 的 kernel 段，保留 ramdisk、cmdline、加载地址、页大小及其他段，
+  重新计算 kernel 大小、对齐和 boot SHA-1。原始模板不被覆盖。
+  下载产物 `pisces-enforcing-<run number>` 中的
+  `boot-pisces-3.4.113-perf-kernelsu-<run number>-selinux-enforcing.img`。
+
+本次移植仅经过静态检查；尚未验证 KernelSU 编译、CI 运行或真机启动。
+
 ## 已验证
 
 - TWRP 3.7.0_9 真机启动，root adb、MTP、Format Data 正常
