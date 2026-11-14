@@ -9,6 +9,12 @@
 		   + __GNUC_MINOR__ * 100 \
 		   + __GNUC_PATCHLEVEL__)
 
+/* Keep GNU89 inline semantics when GCC defaults to GNU11 (GCC 5+). */
+#if defined(__GNUC_STDC_INLINE__) || defined(__GNUC_GNU_INLINE__)
+# define __gnu_inline __attribute__((gnu_inline))
+#else
+# define __gnu_inline
+#endif
 
 /* Optimization barrier */
 /* The "volatile" is due to gcc bugs */
@@ -53,14 +59,14 @@
  */
 #if !defined(CONFIG_ARCH_SUPPORTS_OPTIMIZED_INLINING) || \
     !defined(CONFIG_OPTIMIZE_INLINING) || (__GNUC__ < 4)
-# define inline		inline		__attribute__((always_inline))
-# define __inline__	__inline__	__attribute__((always_inline))
-# define __inline	__inline	__attribute__((always_inline))
+# define inline		inline		__attribute__((always_inline)) __gnu_inline
+# define __inline__	__inline__	__attribute__((always_inline)) __gnu_inline
+# define __inline	__inline	__attribute__((always_inline)) __gnu_inline
 #else
 /* A lot of inline functions can cause havoc with function tracing */
-# define inline		inline		notrace
-# define __inline__	__inline__	notrace
-# define __inline	__inline	notrace
+# define inline		inline		__gnu_inline notrace
+# define __inline__	__inline__	__gnu_inline notrace
+# define __inline	__inline	__gnu_inline notrace
 #endif
 
 #define __deprecated			__attribute__((deprecated))
