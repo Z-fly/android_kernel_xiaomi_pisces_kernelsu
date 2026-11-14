@@ -105,6 +105,8 @@
 #define gcc_header(x) _gcc_header(x)
 #if __GNUC__ <= 4
 #include gcc_header(__GNUC__)
+#elif __GNUC__ == 5
+#include gcc_header(5)
 #else
 #include gcc_header(4)
 #endif
